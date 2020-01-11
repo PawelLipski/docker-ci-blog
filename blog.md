@@ -43,55 +43,75 @@ As with any good stack, the layers are organized so that no layer needs to know 
 Arguably, the most central part of the entire setup is the [Dockerfile](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/Dockerfile), let's start from there.
 
 ```dockerfile
-FROM ubuntu
-
-RUN apt-get update && apt-get install -y autoconf gcc gettext libz-dev make python-pip python3-pip software-properties-common unzip wget
-RUN add-apt-repository ppa:deadsnakes/ppa
-RUN apt-get update
+FROM ubuntu:18.04
 
 ARG git_version
-RUN wget -q https://github.com/git/git/archive/v$git_version.zip
-RUN unzip -q v$git_version.zip
-WORKDIR git-$git_version
-RUN make configure
-RUN ./configure
-RUN make
-RUN make install
-RUN git --version
+RUN set -x \
+    && apt-get update \
+    && apt-get install -y autoconf gcc gettext libz-dev make unzip wget \
+    && wget -q https://github.com/git/git/archive/v$git_version.zip \
+    && unzip -q v$git_version.zip \
+    && rm v$git_version.zip \
+    && cd git-$git_version \
+    && make configure \
+    && ./configure \
+    && make \
+    && make install \
+    && git --version \
+    && cd .. \
+    && rm -rf git-$git_version/ \
+    && apt-get purge -y autoconf gcc gettext libz-dev make unzip wget \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
 ARG python_version
 ENV PYTHON_VERSION=${python_version}
 ENV PYTHON="python${python_version}"
-RUN apt-get install -y $PYTHON
-RUN $PYTHON -m pip install tox
+RUN set -x \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get purge -y software-properties-common \
+    && apt-get autoremove -y \
+    && PYTHON_MAJOR=${python_version%.*} \
+    && if [ "$PYTHON_MAJOR" -eq 2 ]; then apt-get install -y --no-install-recommends gcc ${PYTHON}-dev python-pip; fi \
+    && if [ "$PYTHON_MAJOR" -eq 3 ]; then apt-get install -y --no-install-recommends python3-pip; fi \
+    && apt-get install -y --no-install-recommends $PYTHON \
+    && $PYTHON -m pip install setuptools six wheel \
+    && $PYTHON -m pip install tox \
+    && rm -rf /var/lib/apt/lists/*
 
 ARG user_id
 ARG group_id
-
 RUN "[" ${user_id:-0} -ne 0 ] \
     && [ ${group_id:-0} -ne 0 ] \
     && groupadd -g ${group_id} ci-user \
     && useradd -l -u ${user_id} -g ci-user ci-user \
     && install -d -m 0755 -o ci-user -g ci-user /home/ci-user
-
 USER ci-user
-
 COPY --chown=ci-user:ci-user entrypoint.sh /home/ci-user/entrypoint.sh
 RUN chmod +x ~/entrypoint.sh
 ENTRYPOINT /home/ci-user/entrypoint.sh
-
 WORKDIR /home/ci-user/git-machete
 ```
 
-The first three sections are just for setting up git and Python in the desired versions and aren't particularly interesting.
-The only worth noting here is that the heaviest operation of installing the software necessary for the build 
+The purpose of the first two sections is to set up git and Python in the desired versions.
+The non-obvious part here are very long chains of `&&`-ed shell commands under `RUN`, some of which are, surprisingly, related to _removing_ rather than installing software 
+(`apt-get purge`, `apt-get autoremove`, `rm -rf`).
+Two questions arise: why combine so many commands into a single `RUN` rather than split them into mutliple `RUN`s and why remove the software?
+Docker stores data in layers... 
+TODO!!!!!!!
+TODO!!!!!!!
+TODO!!!!!!!
+The image in the first version when all the dependencies were installed at the very beginning and never removed took around 1GB.
+After including the removal steps and squeezing the installations and removals into the same layer, it went down to around 300MB.
 
-Actually, it goes without saying that we shouldn't building a separate image every time any portion of the codebase changes - this would be completely contrary ???? 
-
-TODO: screenshot from Travis build!
-
-We'll return to the upper layers (.travis.yml and ci/tox/travis-*.sh) in a second,
-let's first take a closer look at [ci/tox/docker-compose.yml](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/docker-compose.yml):
+Now please note that Dockerfile doesn't refer to the project codebase other than to entrypoint.sh.
+The trick is that the entire codebase is mounted as a volume to the *container* rather than backed into image!
+Let's take a closer look at [ci/tox/docker-compose.yml](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/docker-compose.yml)
+which provides the recipe on how to configure the image build and how to run the container.
+Since the YML itself is located in ci/tox/, the paths are also relative to ci/tox/ rather than the project root.
 
 ```yaml
 version: '3'
@@ -100,42 +120,37 @@ services:
     image: virtuslab/git-machete-ci-tox:${DOCKER_TAG:-latest}
     build:
       context: .
-      dockerfile: upload.Dockerfile
       args:
         - user_id=${USER_ID:-0}
         - group_id=${GROUP_ID:-0}
+        - git_version=${GIT_VERSION:-0.0.0}
+        - python_version=${PYTHON_VERSION:-0.0.0}
     volumes:
       - ${PWD}/../..:/home/ci-user/git-machete
-    env_file:
-      - upload-vars.env
 ```
 
-We'll explain the exact rationale behind `args` and `env_file` later.
-Let's now focus on `context`, `dockerfile` and `volumes` sections.
+As `volumes` section indicates, the entire codebase is mounted under `WORKDIR` (/home/ci-user/git-machete/) inside the container.
+`PYTHON_VERSION` and `GIT_VERSION` are provided by Travis based on the configuration in [.travis.yml](https://github.com/VirtusLab/git-machete/blob/master/.travis.yml),
+here redacted for brevity:
 
+```yaml
+os: linux
+language: minimal
+env:
+  - PYTHON_VERSION=2.7 GIT_VERSION=2.0.0
+  - PYTHON_VERSION=2.7 GIT_VERSION=2.7.1
+  - PYTHON_VERSION=3.6 GIT_VERSION=2.20.1
+  - PYTHON_VERSION=3.8 GIT_VERSION=2.24.1 DEPLOY=true
 
-TODO fill up
+install: bash ci/tox/travis-install.sh
 
+script: bash ci/tox/travis-script.sh
 
-The entire codebase is mounted under /home/ci-user/git-machete/ inside the container.
+.... skipped ....
+```
 
-There's a slight catch here: we also mount the ci/tox/ directory that we previously passed as build context to the image as a part of this volume...
-but this doesn't make much difference inside the container anyway.
-
-Now one thing we didn't cover is where `DOCKER_TAG` comes from and how it's generated...
-
-Let's think for a moment what are the characteristic features that distinguish one build image from another.
-
-Take into account git and Python version and have a separate image for each tested combination.
-
-Thus, the Docker image is not generated based on the state of the entire repo, just the ci/tox folder
-
-This way a single image can be reused even as the codebase changes.
-
-The only point when the image itself should be rebuild is when the contents of `ci/tox` change!
-This is likely to be very rare compared to how often the actual codebase is going to change.
-
-The parts that depend on the rest of repository are actually happening in the [ci/tox/entrypoint.sh](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/entrypoint.sh) script:
+The parts of the pipeline that actually take the codebase (mounted as a volume to the Docker container) into account
+are located in the [ci/tox/entrypoint.sh](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/entrypoint.sh) script:
 
 ```shell script
 #!/usr/bin/env bash
@@ -153,16 +168,23 @@ PATH=$PATH:~/.local/bin/
 git machete --version
 ```
 
-We're first checking if the git-machete repo has really been mounted, an subsequently run the magic `tox` command that runs code style check, tests etc.
-
-Python (of version `$PYTHON_VERSION`) and git (also in its own specified version) are already installed.
-
-Now given that we separated the things that are likely to change TODO... cache the images TODO
-
-It would be nice if we somehow made CI aware that it doesn't need to build the image that if a similar build already happened in the past...
+It's first checking if the git-machete repo has really been mounted, an subsequently fires the all-encompassing `tox` Python command that runs code style check, tests etc.
+Python (in version `$PYTHON_VERSION`) and git (also in its own specified version) are already installed in the image.
 
 
 ## Caching: rebuild image by folder on CI
+
+Now given that we separated the things that are likely to change often from the ones that generally remain static for long periods of time,
+it would be nice to cache the images that generated, so that CI doesn't need to build the image the same image over and over again.
+
+Now the last notable thing we didn't cover so far is where `DOCKER_TAG` in docker-compose.yml comes from and how it's generated.
+
+Let's think for a moment what are the characteristic features that make one generated image different from another.
+
+We obviously have to take into account git and Python version - passing a different combination of those will surely result in a different final image.
+But with respect to project files... since it's ci/tox/ that's passed as build context, Dockerfile doesn't know anything about the files from outside ci/tox/!
+This means that even if other project files change (which is, well, inevitable when the project is being developed), we can use the same image as long as ci/tox/ remains untouched.
+Note that the changes to ci/tox/ are likely to be very rare compared to how often the rest of codebase is going to change.
 
 Well, the key observation is that the entire resulting build image depends only on the contents of ci/tox/ directory
 (with one reservation that packages installed via apt-get can also get updated over time in their respective APT repositories).
@@ -174,7 +196,7 @@ Specifically:
 * the recipe on how to run the container given the image (volumes to mount, env file) is also included in ci/tox/docker-compose.yml,
 * finally, even the way of invoking the high-level docker-compose commands themselves is also located within ci/tox as travis-script.sh and travis-install.sh.
 
-Given all that, what if we just computed the hash of the entire ci/tox/ directory and appended to the docker image tag?
+Given all that, what if we just computed the hash of the entire ci/tox/ directory and appended to the Docker image tag?
 Actually, we don't even need to compute that hash ourselves!
 We can take advantage of SHA-1 hashes that git computes for each object.
 It's a well known fact that each commit in git has a unique hash, but actually SHA-1 hashes are also derived for each file (called _blob_ in gitspeak) and each directory (called _tree_).
@@ -194,27 +216,6 @@ The `<revision>:<path>` syntax might be familiar from `git show`.
 Note that obviously this hash is distinct from the resulting Docker image hash.
 Git object hashes are 160-bit (40 hex digit) SHA-1 hashes, while Docker identifies images by their 256-bit (64 hex digit) SHA-256 hash.
 
-An excerpt from [.travis.yml](https://github.com/VirtusLab/git-machete/blob/master/.travis.yml), slightly redacted for brevity:
-
-```yaml
-os: linux
-language: minimal
-env:
-  - PYTHON_VERSION=2.7 GIT_VERSION=2.0.0
-  - PYTHON_VERSION=2.7 GIT_VERSION=2.7.1
-  - PYTHON_VERSION=2.7 GIT_VERSION=2.20.1
-  - PYTHON_VERSION=3.6 GIT_VERSION=2.20.1
-  - PYTHON_VERSION=3.6 GIT_VERSION=2.24.1
-  - PYTHON_VERSION=3.8 GIT_VERSION=2.20.1
-  - PYTHON_VERSION=3.8 GIT_VERSION=2.24.1
-
-install: bash ci/tox/travis-install.sh
-
-script: bash ci/tox/travis-script.sh
-
-.... skipped ....
-```
-
 Let's now peek into [ci/tox/travis-install.sh](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/travis-install.sh):
 
 ```shell script
@@ -232,7 +233,6 @@ docker-compose pull tox || {
     docker-compose push tox
   }
 }
-
 ```
 
 We construct the docker image hash including the 3 variables that we need to take into account: git version, Python version and git hash of ci/tox directory used to build the image.
@@ -292,29 +292,21 @@ will be owned by the root:
 
 What if only Docker provided the option to run commands as non-root user...
 
-Let's take a closer look now at [ci/tox/Dockerfile](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/Dockerfile).
-The parts where git and Python are installed are skipped since they're not of much interest for us here.
-
+Let's take a look again at [ci/tox/Dockerfile](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/Dockerfile), this time on the bottom part:
 ```dockerfile
-FROM ubuntu
-
 # ... git & python installation - skipped ...
 
 ARG user_id
 ARG group_id
-
 RUN "[" ${user_id:-0} -ne 0 ] \
     && [ ${group_id:-0} -ne 0 ] \
     && groupadd -g ${group_id} ci-user \
     && useradd -l -u ${user_id} -g ci-user ci-user \
     && install -d -m 0755 -o ci-user -g ci-user /home/ci-user
-
 USER ci-user
-
 COPY --chown=ci-user:ci-user entrypoint.sh /home/ci-user/entrypoint.sh
 RUN chmod +x ~/entrypoint.sh
 ENTRYPOINT /home/ci-user/entrypoint.sh
-
 WORKDIR /home/ci-user/git-machete
 ```
 
@@ -357,4 +349,4 @@ For more details on git-machete tool itself, see
 [first part a guide on how to use the tool](https://medium.com/virtuslab/make-your-way-through-the-git-rebase-jungle-with-git-machete-e2ed4dbacd02) and
 [second part for more advanced features](https://medium.com/virtuslab/git-machete-strikes-again-traverse-the-git-rebase-jungle-even-faster-with-v2-0-f43ebaf8abb0).
 
-Contributions (and stars on Github!) are more then welcome, esp. if you're proficient with production use of Python.
+Contributions (and stars on Github!) are more then welcome, especially if you're proficient with production use of Python or with the internals of git.
