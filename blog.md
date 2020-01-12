@@ -6,7 +6,7 @@ it's very likely that some (if not most) of the techniques outlined in this blog
 
 We'll take a closer look at the CI process for an open source tool being under active developed at VirtusLab.
 [git machete](https://github.com/VirtusLab/git-machete), having started as simple rebase automation tool,
-now developed into a full-fledged git repository organizer and even earned its own logo, stylized as git cut in the half.
+now developed into a full-fledged git repository organizer and even earned its own logo, stylized as the original git logo with extra forks, slashed in the half.
 
 ![git-machete](https://raw.githubusercontent.com/VirtusLab/git-machete/master/logo.png)
 
@@ -20,7 +20,7 @@ It's assumed you're familiar with concepts like [Dockerfiles](https://docs.docke
 and [docker-compose](https://docs.docker.com/compose/).
 
 
-## The five-layered stack
+## The five-layer stack
 
 Let's get this handy table first:
 
@@ -31,6 +31,7 @@ Let's get this handy table first:
 | ci/tox/docker-compose.yml          | Provides configuration for building the image/running the container  |
 | ci/tox/Dockerfile                  | Stores recipe on how to build the Docker image                       |
 | ci/tox/build-context/entrypoint.sh | Serves as the entrypoint for the container                           |
+
 
 As often the case with similar stack-like solutions, the layers are organized so that no layer needs to know anything about the ones above,
 only about the ones below (in fact, typically just one below and not more).
@@ -99,12 +100,12 @@ Let's leave the third section (the one with `user_id` and `group_id` ARGs) aside
 The purpose of the first two sections is to set up git and Python in the desired versions.
 The non-obvious piece here are very long chains of `&&`-ed shell commands under `RUN`, some of which, surprisingly, relate to _removing_ rather than installing software
 (`apt-get purge`, `apt-get autoremove`, `rm -rf`).
-Two questions arise: why combine so many commands into a single `RUN` rather than split them into mutliple `RUN`s and why remove any software at all?
+Two questions arise: why combine so many commands into a single `RUN` rather than split them into multiple `RUN`s and why remove any software at all?
 
 Docker stores data in layers that correspond to Dockerfile instructions.
-If an instruction (typically `RUN` or `COPY`) adds data to the underlying file system (which is typically OverlayFS on modern systems, by the way),
+If an instruction (usually `RUN` or `COPY`) adds data to the underlying file system (which is typically OverlayFS on modern systems, by the way),
 this data, even if it's later removed in a subsequent layer, will remain a part of the layer and thus of the resulting image.
-If some software is only needed for building the image but not for running the container, then leaving it installed is a pure waste of space.
+If some software (like `gcc`) is only needed for building the image but not for running the container, then leaving it installed is a pure waste of space.
 The only way to prevent the resulting image from bloating is to remove no longer necessary files in the very same layer as they were added.
 Hence, the first `RUN` instruction installs all of `autoconf gcc gettext libz-dev make unzip wget`, necessary to build git from source, only to later remove it in the same shell script.
 What survives in the resulting layer is only the git installation that we care for, but not the GNU toolchain necessary to arrive at this installation in the first place
@@ -119,7 +120,7 @@ This will make caching the images (covered in one of the next chapters) far less
 ## Making the image reusable: mount project folder as a volume
 
 Now let's note that Dockerfile doesn't refer to any portion of the project's codebase other than to entrypoint.sh.
-The trick is that the entire codebase is mounted as a volume to the _container_ rather than baked into the image!
+The trick is that the entire codebase is mounted as a volume to the container rather than baked into the image!
 Let's take a closer look at [ci/tox/docker-compose.yml](https://github.com/VirtusLab/git-machete/blob/chore/ci-multiple-git-versions/ci/tox/docker-compose.yml)
 which provides the recipe on how to configure the image build and how to run the container.
 By the way, since the YAML itself is located in ci/tox/, the assumption is that `${PWD}` points to ci/tox/ rather than to the project root.
@@ -192,7 +193,7 @@ the all-encompassing [`tox`](https://tox.readthedocs.io/en/latest/) command that
 
 ## Caching the images: make use of Docker tags
 
-It would be nice to cache the generated images, so that CI doesn't need to build the same image over and over again.
+It would be nice to cache the generated images, so that CI doesn't need to build the same stuff over and over again.
 That caching was by the way also the purpose of the intense image size optimization outlined previously.
 
 Let's think for a moment what specifically makes one generated image different from another.
@@ -204,13 +205,14 @@ This means that even if other files change (which is, well, inevitable when the 
 Note that the changes to ci/tox/build-context are likely to be very rare compared to how often the rest of codebase is going to change.
 
 There's a catch here, though.
-Build context is not the only think that can affect the final Docker image -
+Build context is not the only thing that can affect the final Docker image -
 Dockerfile, docker-compose.yml and even the scripts that run `docker-compose` can also influence the result.
-But since all those files reside under ci/tox/, this doesn't make things much worse - the entire resulting build image depends only on the contents of ci/tox/ directory
+But since all those files reside under ci/tox/, this doesn't make things much worse -
+the entire resulting build image depends only on the contents of ci/tox/ directory instead of ci/tox/build-context/
 (with one reservation that packages installed via apt-get can also get updated over time in their respective APT repositories).
 
 Given all that, what if we just computed the hash of the entire ci/tox/ directory and used it to identify the image?
-Actually, we don't even need to compute that hash ourselves!
+Actually, we don't even need to derive that hash ourselves!
 We can take advantage of SHA-1 hashes that git computes for each object.
 It's a well known fact that each commit in git has a unique hash, but actually SHA-1 hashes are also derived for each file (called a _blob_ in gitspeak) and each directory (called a _tree_).
 Hash of a tree is a function of hashes of all its underlying blobs and, recursively, trees.
@@ -348,7 +350,7 @@ The preceding `USER` instruction unfortunately doesn't affect the default owner 
 One can now ask... well, how come `ci-user` from inside the container can be in any way equivalent to an existing user on the host machine (esp. given that host most likely doesn't have a `ci-user` user or group)?
 
 Well, actually it's the numeric id of user/group that matters; names on Unix systems are just aliases, and they can resolve differently on the host machine and inside the container.
-As a consequence, if there was indeed user called `ci-user` on the host machine... that still completely wouldn't matter from the perspective of ownership of files generated within container -
+As a consequence, if there was indeed a user called `ci-user` on the host machine... that still completely wouldn't matter from the perspective of ownership of files generated within container -
 still, the only thing that matters is the numeric id.
 
 Now after launching `docker-compose up --build tox` we can observe that all files generated inside the volume are owned by the currently logged-in host user:
@@ -359,7 +361,7 @@ Now after launching `docker-compose up --build tox` we can observe that all file
 ## Summary: where to look next
 
 We've taken a look at the entire stack used for building and testing git branches,
-but there is also a similar setting for deployment (only executed for git tags) in [ci/apt-ppa](https://github.com/VirtusLab/git-machete/tree/chore/ci-multiple-git-versions/ci/apt-ppa-upload) directory,
+but there is also a similar setting for deployment (only executed for git tags) in [ci/apt-ppa-upload](https://github.com/VirtusLab/git-machete/tree/chore/ci-multiple-git-versions/ci/apt-ppa-upload) directory,
 specifically for upload of Debian packages to [PPA (Personal Package Archive) for Ubuntu](https://launchpad.net/~virtuslab/+archive/ubuntu/git-machete/+packages).
 From the technical perspective, the only significantly different point is more prevalent use of secrets (for GPG and SSH).
 
@@ -367,4 +369,4 @@ For more details on git-machete tool itself, see
 [first part of a guide on how to use the tool](https://medium.com/virtuslab/make-your-way-through-the-git-rebase-jungle-with-git-machete-e2ed4dbacd02) and
 [second part for the more advanced features](https://medium.com/virtuslab/git-machete-strikes-again-traverse-the-git-rebase-jungle-even-faster-with-v2-0-f43ebaf8abb0).
 
-Contributions (and stars on Github!) are more then welcome, especially if you're proficient with production use of Python or with the internals of git.
+Contributions (and stars on Github!) are more than welcome, especially if you're proficient with production use of Python or with the internals of git.
