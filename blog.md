@@ -37,10 +37,6 @@ The files that are particularly relevant to us:
 | ci/tox/build-context/entrypoint.sh | Serves as the entrypoint for the container                           |
 
 
-As often the case with similar stack-like solutions, the responsibilities are divided so that no file (and its corresponding tool) needs to know anything about the ones above,
-only about the ones below (in fact, typically just one below and not more).
-
-
 ## Reducing image size: keep each layer small
 
 Arguably, the most central part of the entire setup is the [Dockerfile](https://github.com/VirtusLab/git-machete/blob/chore/ci-multiple-git-versions/ci/tox/Dockerfile).
@@ -91,12 +87,12 @@ WORKDIR /home/ci-user/git-machete
 
 We’ll return to the final section (the one with `user_id` and `group_id` ARGs) when speaking about non-root user setup.
 
-The purpose of the second section (the one with `git_version` ARG) is to install git in the desired version.
+The purpose of the second section (the one with `git_version` ARG) is to install git in a specific version.
 The non-obvious piece here is the very long chain of `&&`-ed shell commands under `RUN`, some of which, surprisingly, relate to _removing_ rather than installing software (`apk del`, `rm`).
 Two questions arise: why combine so many commands into a single `RUN` rather than split them into multiple `RUN`s and why even remove any software at all?
 
 Docker stores the image contents in layers that correspond to Dockerfile instructions.
-If an instruction (usually `RUN` or `COPY`) adds data to the underlying file system (which is typically OverlayFS nowadays, by the way),
+If an instruction (usually `RUN` or `COPY`) adds data to the underlying file system (which is typically [OverlayFS](https://docs.docker.com/storage/storagedriver/overlayfs-driver/) nowadays, by the way),
 this data, even if it's later removed in a subsequent layer, will remain a part of the layer corresponding to the instruction, and will thus make its way to the final image.
 
 If a piece of software (like `alpine-sdk`) is only needed for building the image but not for running the container, then leaving it installed is a pure waste of space.
@@ -112,7 +108,7 @@ A more naive version of this Dockerfile, with all the dependencies installed at 
 
 After including the `apk del` and `rm` commands, and squeezing the installations and removals into the same layer,
 the resulting image shrinks to around 150-250MB, depending on the exact git and Python version.
-This makes caching the images (covered in one of the next chapters) far less space-consuming.
+This makes caching the images far less space-consuming.
 
 As a side note, if you're curious how I figured out which files (`git-fast-import`, `git-http-backend` etc.) to remove from /usr/local/libexec/git-core/,
 take a look at [dive](https://github.com/wagoodman/dive), an excellent TUI tool for inspecting files residing within each layer of a Docker image.
@@ -167,7 +163,7 @@ script: bash ci/tox/travis-script.sh
 ```
 
 (Yes, we're still keeping [Python 2 support](https://pythonclock.org/)...
-but in general, if you still somehow happen to have Python 2 (and not 3) on your machine, please upgrade your software!)
+but in general, if you still somehow happen to have Python 2 and not Python 3 on your machine, please upgrade your software!)
 
 The part of the pipeline that actually takes the contents of the mounted volume into account
 is located in [ci/tox/build-context/entrypoint.sh](https://github.com/VirtusLab/git-machete/blob/chore/ci-multiple-git-versions/ci/tox/build-context/entrypoint.sh) script:
@@ -301,7 +297,7 @@ One of the likely rationales for that option not being the default is that `up` 
 and it wouldn't be obvious the exit code of which service should be selected.
 
 
-## Running the build locally: provide a non-root user
+## Running the build locally: configure a non-root user
 
 To run the tests locally:
 
@@ -394,13 +390,15 @@ Now after launching `./local-run.sh` we can observe that all files generated ins
 
 ## Summary: where to look next
 
-We've taken a look at the entire stack used for building and testing git branches,
-but there is also a similar setting for deployment (only executed for git tags) in [ci/apt-ppa-upload](https://github.com/VirtusLab/git-machete/tree/chore/ci-multiple-git-versions/ci/apt-ppa-upload) directory,
-specifically for upload of Debian packages to [PPA (Personal Package Archive) for Ubuntu](https://launchpad.net/~virtuslab/+archive/ubuntu/git-machete/+packages).
+We've taken a look at the entire stack used for building and testing git branches.
+There is also a similar setting for upload of Debian packages to [PPA (Personal Package Archive) for Ubuntu](https://launchpad.net/~virtuslab/+archive/ubuntu/git-machete/+packages)
+in [ci/apt-ppa-upload](https://github.com/VirtusLab/git-machete/tree/chore/ci-multiple-git-versions/ci/apt-ppa-upload) directory,
+which is only executed for git tags.
+
 From the technical perspective, the only significantly different point is more prevalent use of secrets (for GPG and SSH).
 
 For more details on git-machete tool itself, see
 [first part of a guide on how to use the tool](https://medium.com/virtuslab/make-your-way-through-the-git-rebase-jungle-with-git-machete-e2ed4dbacd02) and
 [second part for the more advanced features](https://medium.com/virtuslab/git-machete-strikes-again-traverse-the-git-rebase-jungle-even-faster-with-v2-0-f43ebaf8abb0).
 
-Contributions (and stars on Github!) are more than welcome, especially if you're proficient with production use of Python or with the internals of git.
+Contributions (and stars on Github) are more than welcome!
