@@ -47,7 +47,7 @@ FROM python:${python_version}-alpine
 
 ARG git_version
 RUN set -x \
-    && apk add --no-cache --update --virtual git-build-deps  alpine-sdk autoconf gettext wget zlib-dev \
+    && apk add --no-cache --virtual git-build-deps  alpine-sdk autoconf gettext wget zlib-dev \
     && wget -q https://github.com/git/git/archive/v$git_version.tar.gz \
     && tar xzf v$git_version.tar.gz \
     && rm v$git_version.tar.gz \
@@ -68,7 +68,7 @@ ARG python_version
 ENV PYTHON_VERSION=${python_version}
 ENV PYTHON=python${python_version}
 RUN set -x \
-    && if [ ${PYTHON_VERSION%.*} -eq 2 ]; then apk add --no-cache --update gcc musl-dev; fi
+    && if [ ${PYTHON_VERSION%.*} -eq 2 ]; then apk add --no-cache gcc musl-dev; fi
 
 ARG user_id
 ARG group_id
