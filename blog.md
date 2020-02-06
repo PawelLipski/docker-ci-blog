@@ -38,11 +38,12 @@ The files that are particularly relevant to us:
 
 ## Reducing image size: keep each layer small
 
-The central part of the entire setup is the [Dockerfile](https://github.com/VirtusLab/git-machete/blob/chore/ci-multiple-git-versions/ci/tox/Dockerfile).
+The central part of the entire setup is the [Dockerfile](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/Dockerfile).
 
 ```dockerfile
 ARG python_version
 FROM python:${python_version}-alpine
+RUN ln -s /usr/local/bin/python /usr/bin/python
 
 ARG git_version
 RUN set -x \
@@ -66,7 +67,7 @@ RUN set -x \
 # ... skipped ...
 ```
 
-We’ll return to the skipped parts when dealing with non-root user setup.
+We'll return to the skipped parts later when dealing with non-root user setup.
 
 The purpose of the second section (the one with `git_version` ARG) is to install Git in a specific version.
 The non-obvious step here is the very long chain of `&&`-ed shell commands under `RUN`, some of which, surprisingly, relate to _removing_ rather than installing software (`apk del`, `rm`).
@@ -92,15 +93,15 @@ the resulting image shrinks to around 150-250MB, depending on the exact Git and 
 This makes caching the images far less space-consuming.
 
 As a side note, if you're curious how I figured out which files (`git-fast-import`, `git-http-backend` etc.) to remove from /usr/local/libexec/git-core/,
-take a look at [dive](https://github.com/wagoodman/dive), an excellent TUI tool for inspecting files residing within each layer of a Docker image.
+take a look at [dive](https://github.com/wagoodman/dive), an excellent tool for inspecting files residing within each layer of a Docker image.
 
 
 ## Making the image reusable: mount a volume instead of `COPY`
 
 It would be very handy if the same image could be used to test multiple versions of the code without having to rebuild the image.
 In order to achieve that, the Dockerfile doesn't `COPY` the entire project directory into the image (only the entrypoint script is directly copied).
-The codebase is instead mounted as a volume within the container rather than baked into the image!
-Let's take a closer look at [ci/tox/docker-compose.yml](https://github.com/VirtusLab/git-machete/blob/chore/ci-multiple-git-versions/ci/tox/docker-compose.yml),
+The codebase is instead mounted as a volume within the container rather than baked into the image.
+Let's take a closer look at [ci/tox/docker-compose.yml](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/docker-compose.yml),
 which provides the recipe on how to configure the image build and how to run the container.
 
 ```yaml
@@ -125,17 +126,17 @@ We'll return to the `image:` section and explain the origin of `DIRECTORY_HASH` 
 
 As the `volumes:` section indicates, the entire git-machete codebase is mounted under /home/ci-user/git-machete/ inside the container.
 `PYTHON_VERSION` and `GIT_VERSION` variables, which correspond to `python_version` and `git_version` build args,
-are provided by Travis based on the configuration in [.travis.yml](https://github.com/VirtusLab/git-machete/blob/chore/ci-multiple-git-versions/.travis.yml),
+are provided by Travis based on the configuration in [.travis.yml](https://github.com/VirtusLab/git-machete/blob/master/.travis.yml),
 here redacted for brevity:
 
 ```yaml
 os: linux
 language: minimal
 env:
-  - PYTHON_VERSION=2.7 GIT_VERSION=2.0.0
-  - PYTHON_VERSION=2.7 GIT_VERSION=2.7.1
-  - PYTHON_VERSION=3.6 GIT_VERSION=2.20.1
-  - PYTHON_VERSION=3.8 GIT_VERSION=2.24.1 DEPLOY_ON_TAGS=true
+  - PYTHON_VERSION=2.7 GIT_VERSION=1.7.10  # Earliest version of git supported by git-machete
+  - PYTHON_VERSION=2.7 GIT_VERSION=2.7.6
+  - PYTHON_VERSION=3.6 GIT_VERSION=2.20.2
+  - PYTHON_VERSION=3.8 GIT_VERSION=2.25.0 DEPLOY_ON_TAGS=true
 
 install: bash ci/tox/travis-install.sh
 
@@ -148,7 +149,7 @@ script: bash ci/tox/travis-script.sh
 but nevertheless, if you still use Python 2, please upgrade your software!)
 
 The part of the pipeline that actually takes the contents of the mounted volume into account
-is located in the [ci/tox/build-context/entrypoint.sh](https://github.com/VirtusLab/git-machete/blob/chore/ci-multiple-git-versions/ci/tox/build-context/entrypoint.sh) script
+is located in the [ci/tox/build-context/entrypoint.sh](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/build-context/entrypoint.sh) script
 that is `COPY`-ed into the image:
 
 ```bash
@@ -175,7 +176,7 @@ the all-encompassing [`tox`](https://tox.readthedocs.io/en/latest/) command that
 ## Caching the images: make use of Docker tags
 
 It would be nice to cache the generated images, so that CI doesn't need to build the same stuff over and over again.
-By the way, the intense image size optimization outlined previously is also meant to facilitate caching.
+By the way, the purpose of the intense image size optimization outlined previously is also to facilitate caching.
 
 Think for a moment what specifically makes one generated image different from another.
 We obviously have to take into account different versions of Git and Python &mdash; passing different combinations of these will surely result in a different final image.
@@ -206,7 +207,7 @@ For our use case it means that once any file inside ci/tox/ changes, we'll end u
 To extract the hash of a given directory within the current commit (HEAD),
 we need to resort to one of the more powerful and versatile _plumbing_ commands of git called `rev-parse`:
 
-```shell script
+```bash
 git rev-parse HEAD:ci/tox
 ```
 
@@ -215,7 +216,7 @@ The `<revision>:<path>` syntax might be familiar from `git show`.
 Note that this hash is different from the resulting Docker image hash.
 Also, git object hashes are 160-bit (40 hex digit) SHA-1 hashes, while Docker identifies images by their 256-bit (64 hex digit) SHA-256 hash.
 
-Back into [ci/tox/docker-compose.yml](https://github.com/VirtusLab/git-machete/blob/chore/ci-multiple-git-versions/ci/tox/docker-compose.yml) for a moment:
+Back into [ci/tox/docker-compose.yml](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/docker-compose.yml) for a moment:
 
 ```yaml
 version: '3'
@@ -226,7 +227,7 @@ services:
 ```
 
 We already know that `GIT_VERSION` and `PYTHON_VERSION` are set up directly by Travis based on values specified in .travis.yml.
-Let's peek into [ci/tox/travis-install.sh](https://github.com/VirtusLab/git-machete/blob/chore/ci-multiple-git-versions/ci/tox/travis-install.sh) to see where `DIRECTORY_HASH` comes from:
+Let's peek into [ci/tox/travis-install.sh](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/travis-install.sh) to see where `DIRECTORY_HASH` comes from:
 
 ```bash
 # ... skipped ...
@@ -239,10 +240,10 @@ cd ci/tox/
 docker-compose pull tox || {
   docker-compose build --build-arg user_id="$(id -u)" --build-arg group_id="$(id -g)" tox
   # In builds coming from forks, secret vars are unavailable for security reasons; hence, we have to skip pushing the newly built image.
-  [[ -n ${DOCKER_PASSWORD-} && -n ${DOCKER_USERNAME-} ]] && {
+  if [[ ${DOCKER_PASSWORD-} && ${DOCKER_USERNAME-} ]]; then
     echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
     docker-compose push tox
-  }
+  fi
 }
 ```
 
@@ -266,7 +267,7 @@ If we were to use just plain `docker pull/build/push` instead of their `docker-c
 we'd need to supply e.g. the image name and tag every single time.
 
 Once we have the image in place (either just being built or, hopefully, pulled from Docker Hub),
-running the tests is easy, see [ci/tox/travis-script.sh](https://github.com/VirtusLab/git-machete/blob/chore/ci-multiple-git-versions/ci/tox/travis-script.sh):
+running the tests is easy, see [ci/tox/travis-script.sh](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/travis-script.sh):
 
 ```bash
 # ... skipped ...
@@ -292,7 +293,7 @@ cp .env-sample .env  # and optionally edit if needed to change git/python versio
 ./local-run.sh
 ```
 
-[ci/tox/local-run.sh](https://github.com/VirtusLab/git-machete/blob/chore/ci-multiple-git-versions/ci/tox/local-run.sh) is somewhat similar to how things are run on Travis:
+[ci/tox/local-run.sh](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/local-run.sh) is somewhat similar to how things are run on Travis:
 
 ```bash
 # ... skipped ...
@@ -332,7 +333,7 @@ will belong to root:
 
 If only Docker had an option to run commands as a non-root user...
 
-Let's take a look again at [ci/tox/Dockerfile](https://github.com/VirtusLab/git-machete/blob/chore/ci-multiple-git-versions/ci/tox/Dockerfile), this time the bottom part:
+Let's take a look again at [ci/tox/Dockerfile](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/Dockerfile), this time the bottom part:
 ```dockerfile
 # ... git & python setup - skipped ...
 
@@ -380,7 +381,7 @@ Now after launching `./local-run.sh` we can observe that all files generated ins
 
 We've taken a look at the entire stack used for building and testing git branches.
 There is also a similar setting for uploading Debian packages to [PPA (Personal Package Archive) for Ubuntu](https://launchpad.net/~virtuslab/+archive/ubuntu/git-machete/+packages)
-in [ci/apt-ppa-upload](https://github.com/VirtusLab/git-machete/tree/chore/ci-multiple-git-versions/ci/apt-ppa-upload) directory,
+in [ci/apt-ppa-upload](https://github.com/VirtusLab/git-machete/tree/master/ci/apt-ppa-upload) directory,
 which is only executed for git tags.
 From a technical perspective, the only significantly different point is more prevalent use of secrets (for GPG and SSH).
 
