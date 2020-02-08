@@ -1,5 +1,5 @@
 
-# Nifty Docker tricks you'll crave to use in your CI!
+# Nifty Docker tricks you'll crave to use in your CI (vol. 1)
 
 If you're running Dockerized jobs in your CI (or considering migration to Docker-based flow),
 it's very likely that some (if not most) of the techniques outlined in this blog post will prove very useful.
@@ -10,7 +10,7 @@ It even acquired its own logo, stylized as the original Git logo with extra fork
 
 ![git-machete](https://raw.githubusercontent.com/VirtusLab/git-machete/master/logo.png)
 
-The purpose of the git-machete's CI is to ensure that it performs its basic functions correctly under
+The purpose of the git-machete's CI is to ensure that its basic functions work correctly under
 a wide array of Git and Python versions that the users might have on their machines.
 In this blog post, we're going to create a Dockerized environment that allows for running such functional tests both locally and in CI.
 We're using [Travis CI](https://travis-ci.org/VirtusLab/git-machete) specifically, but the effort needed to migrate the entire configuration to any other modern CI is minimal.
@@ -39,12 +39,9 @@ The files that are particularly relevant to us:
 ## Reducing image size: keep each layer small
 
 The central part of the entire setup is the [Dockerfile](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/Dockerfile).
+Let's first have a look at the part responsible for Git installation:
 
 ```dockerfile
-ARG python_version
-FROM python:${python_version}-alpine
-RUN ln -s /usr/local/bin/python /usr/bin/python
-
 ARG git_version
 RUN set -x \
     && apk add --no-cache --virtual git-build-deps  alpine-sdk autoconf gettext wget zlib-dev \
@@ -63,37 +60,37 @@ RUN set -x \
     && rm -rfv /usr/local/bin/git-shell /usr/local/share/git-gui/ \
     && cd /usr/local/libexec/git-core/ \
     && rm -fv git-credential-* git-daemon git-fast-import git-http-backend git-imap-send git-remote-testsvn git-shell
-
-# ... skipped ...
 ```
 
-We'll return to the skipped parts later when dealing with non-root user setup.
+We'll return to the skipped parts in the [second part of this post](https://medium.com/virtuslab) when dealing with non-root user setup.
 
-The purpose of the second section (the one with `git_version` ARG) is to install Git in a specific version.
+The purpose of these commands is to install a specific version of Git.
 The non-obvious step here is the very long chain of `&&`-ed shell commands under `RUN`, some of which, surprisingly, relate to _removing_ rather than installing software (`apk del`, `rm`).
 Two questions arise: why combine so many commands into a single `RUN` rather than split them into multiple `RUN`s and why even remove any software at all?
 
 Docker stores the image contents in layers that correspond to Dockerfile instructions.
-If an instruction (usually `RUN` or `COPY`) adds data to the underlying file system (which is typically [OverlayFS](https://docs.docker.com/storage/storagedriver/overlayfs-driver/) nowadays, by the way),
-this data, even if it's later removed in a subsequent layer, will remain a part of the layer corresponding to the instruction, and will thus make its way to the final image.
+If an instruction (such as `RUN` or `COPY`) adds data to the underlying file system
+(which, by the way, is usually [OverlayFS](https://docs.docker.com/storage/storagedriver/overlayfs-driver/) nowadays),
+this data, even if removed in a subsequent layer, will remain part of the intermediate layer that corresponds to the instruction, and will thus make its way to the final image.
 
 If a piece of software (like `alpine-sdk`) is only needed for building the image but not for running the container, then leaving it installed is an utter waste of space.
-A reasonable (but not the only one &mdash; see the [multistage builds](https://docs.docker.com/develop/develop-images/multistage-build/)) way to prevent the resulting image from bloating
-is to remove unnecessary files in the very same layer as they were added.
-Hence, the first `RUN` instruction installs all of `alpine-sdk autoconf gettext wget zlib-dev`, necessary to build Git from source, only to later remove it (`apk del`) in the same shell script.
-What survives in the resulting layer is only the Git installation that we care for, but not the toolchain necessary to arrive at this installation in the first place
-(but which would otherwise be useless in the final image).
+A reasonable way (but not the only one &mdash; see the [multistage builds](https://docs.docker.com/develop/develop-images/multistage-build/)) to prevent the resulting image from bloating
+is to remove unnecessary files in the very same layer in which they were added.
+Hence, the first `RUN` instruction installs all the compile-time dependencies of Git (`alpine-sdk autoconf gettext wget zlib-dev`),
+only to later remove them (`apk del`) in the same shell script.
+What remains in the resulting layer is just the Git installation that we care for,
+but not the toolchain necessary to build it (which would be useless in the final image).
 
-A more na&iuml;ve version of this Dockerfile, with all the dependencies installed at the very beginning and never removed, yields an almost 800MB behemoth:
+A more na&iuml;ve version of this Dockerfile, with all the dependencies installed at the very beginning and never removed, yields an almost 800 MB behemoth:
 
 ![docker images](docker-images.png)
 
 After including the `apk del` and `rm` commands, and squeezing the installations and removals into the same layer,
-the resulting image shrinks to around 150-250MB, depending on the exact Git and Python version.
+the resulting image shrinks to around 150-250 MB, depending on the exact Git and Python version.
 This makes caching the images far less space-consuming.
 
-As a side note, if you're curious how I figured out which files (`git-fast-import`, `git-http-backend` etc.) to remove from /usr/local/libexec/git-core/,
-take a look at [dive](https://github.com/wagoodman/dive), an excellent tool for inspecting files residing within each layer of a Docker image.
+As a side note, if you're curious how I figured out which files (`git-fast-import`, `git-http-backend` etc.) can be removed from /usr/local/libexec/git-core/,
+take a look at [dive](https://github.com/wagoodman/dive), an excellent tool for inspecting files that reside within each layer of a Docker image.
 
 
 ## Making the image reusable: mount a volume instead of `COPY`
@@ -172,11 +169,24 @@ git machete --version
 It first checks if the git-machete repo has really been mounted under the current working directory, then fires
 the all-encompassing [`tox`](https://tox.readthedocs.io/en/latest/) command that runs code style check, tests etc.
 
+In the [second part of the series](https://medium.com/virtuslab) we will cover a technique for caching the images
+and a trick that ensures that files created by the running container inside the volume are not owned by root on the host machine.
+
+
+------------------------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------
+
+# Nifty Docker tricks you'll crave to use in your CI (vol. 2)
+
+The [first part of the series](https://medium.com/virtuslab) outlined techniques for reducing the image size
+as well as suggested to mount the project directory as a volume to avoid rebuilding the image every time the codebase changes.
+Let's continue with further Docker-related CI tricks, as showcased in [git-machete](http://github.com/VirtusLab/git-machete)'s Travis CI setup.
 
 ## Caching the images: make use of Docker tags
 
 It would be nice to cache the generated images, so that CI doesn't need to build the same stuff over and over again.
-By the way, the purpose of the intense image size optimization outlined previously is also to facilitate caching.
+By the way, the purpose of the intense image size optimization [outlined previously](https://medium.com/virtuslab) is also to facilitate caching.
 
 Think for a moment what specifically makes one generated image different from another.
 We obviously have to take into account different versions of Git and Python &mdash; passing different combinations of these will surely result in a different final image.
@@ -368,7 +378,7 @@ One can now ask... how come `ci-user` from inside the container can be in any wa
 
 Well, actually it's the numeric id of user/group that matters; names on Unix systems are just aliases,
 and they can resolve differently on the host machine and inside the container.
-As a consequence, if there was indeed a user called `ci-user` on the host machine...
+As a consequence, even if there was indeed a user called `ci-user` on the host machine,
 that still completely wouldn't matter from the perspective of ownership of files generated within a container &mdash;
 still, the only thing that matters is the numeric id.
 
