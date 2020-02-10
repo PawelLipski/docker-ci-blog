@@ -1,19 +1,19 @@
 
-# Nifty Docker tricks you'll crave to use in your CI (vol. 1)
+# Nifty Docker tricks you'll want to use in your CI (vol. 1)
 
-If you're running Dockerized jobs in your CI (or considering migration to Docker-based flow),
-it's very likely that some (if not most) of the techniques outlined in this blog post will prove very useful.
+If you run dockerized jobs in your CI (or consider migration to the Docker-based flow),
+it's very likely that some (if not most) of the techniques outlined in this blog post will prove highly useful to you.
 
-We'll take a closer look at the CI process for an open source tool, [git machete](https://github.com/VirtusLab/git-machete), being under active development at VirtusLab.
-Having started as a simple rebase automation tool, it has now grown into a full-fledged Git repository organizer.
+We'll take a closer look at the CI process for an open source tool, [git machete](https://github.com/VirtusLab/git-machete), that is actively developed at VirtusLab.
+Having started as a simple tool for rebase automation, it has now grown into a full-fledged Git repository organizer.
 It even acquired its own logo, stylized as the original Git logo with extra forks, slashed in half.
 
 ![git-machete](https://raw.githubusercontent.com/VirtusLab/git-machete/master/logo.png)
 
 The purpose of the git-machete's CI is to ensure that its basic functions work correctly under
 a wide array of Git and Python versions that the users might have on their machines.
-In this blog post, we're going to create a Dockerized environment that allows for running such functional tests both locally and in CI.
-We're using [Travis CI](https://travis-ci.org/VirtusLab/git-machete) specifically, but the effort needed to migrate the entire configuration to any other modern CI is minimal.
+In this blog post, we're going to create a dockerized environment that allows to run such functional tests both locally and on a CI server.
+This particular project uses [Travis CI](https://travis-ci.org/VirtusLab/git-machete), but the entire configuration can be migrated to any other modern CI with minimal effort.
 
 This article assumes that you're familiar with concepts like [Dockerfiles](https://docs.docker.com/engine/reference/builder/)
 and [docker-compose](https://docs.docker.com/compose/).
@@ -25,7 +25,7 @@ Let's start with the project layout (also available [on Github](https://github.c
 
 ![project layout](project-layout.png)
 
-The files that are particularly relevant to us:
+These are the files that are particularly relevant to us:
 
 | File                               | Responsibility                                                       |
 | ---                                | ---                                                                  |
@@ -62,32 +62,32 @@ RUN set -x \
     && rm -fv git-credential-* git-daemon git-fast-import git-http-backend git-imap-send git-remote-testsvn git-shell
 ```
 
-We'll return to the skipped parts in the [second part of this post](https://medium.com/virtuslab) when dealing with non-root user setup.
+We'll discuss the parts that have been skipped in the [second part of this post](https://medium.com/virtuslab) when dealing with non-root user setup.
 
 The purpose of these commands is to install a specific version of Git.
 The non-obvious step here is the very long chain of `&&`-ed shell commands under `RUN`, some of which, surprisingly, relate to _removing_ rather than installing software (`apk del`, `rm`).
-Two questions arise: why combine so many commands into a single `RUN` rather than split them into multiple `RUN`s and why even remove any software at all?
+This prompts two questions: why combine so many commands into a single `RUN` rather than split them into multiple `RUN`s; and why even remove any software at all?
 
 Docker stores the image contents in layers that correspond to Dockerfile instructions.
 If an instruction (such as `RUN` or `COPY`) adds data to the underlying file system
 (which, by the way, is usually [OverlayFS](https://docs.docker.com/storage/storagedriver/overlayfs-driver/) nowadays),
-this data, even if removed in a subsequent layer, will remain part of the intermediate layer that corresponds to the instruction, and will thus make its way to the final image.
+these data, even if removed in a subsequent layer, will remain part of the intermediate layer that corresponds to the instruction, and will thus make their way to the final image.
 
 If a piece of software (like `alpine-sdk`) is only needed for building the image but not for running the container, then leaving it installed is an utter waste of space.
 A reasonable way (but not the only one &mdash; see the [multistage builds](https://docs.docker.com/develop/develop-images/multistage-build/)) to prevent the resulting image from bloating
 is to remove unnecessary files in the very same layer in which they were added.
 Hence, the first `RUN` instruction installs all the compile-time dependencies of Git (`alpine-sdk autoconf gettext wget zlib-dev`),
-only to later remove them (`apk del`) in the same shell script.
+only to remove them (`apk del`) later in the same shell script.
 What remains in the resulting layer is just the Git installation that we care for,
-but not the toolchain necessary to build it (which would be useless in the final image).
+but not the toolchain it was build with (which would be useless in the final image).
 
-A more na&iuml;ve version of this Dockerfile, with all the dependencies installed at the very beginning and never removed, yields an almost 800 MB behemoth:
+A more na&iuml;ve version of this Dockerfile, in which all the dependencies are installed at the very beginning and never removed, yields an almost 800 MB behemoth:
 
 ![docker images](docker-images.png)
 
 After including the `apk del` and `rm` commands, and squeezing the installations and removals into the same layer,
-the resulting image shrinks to around 150-250 MB, depending on the exact Git and Python version.
-This makes caching the images far less space-consuming.
+the resulting image shrinks to around 150-250 MB, depending on the exact versions of Git and Python.
+This makes the images caches far less space-consuming.
 
 As a side note, if you're curious how I figured out which files (`git-fast-import`, `git-http-backend` etc.) can be removed from /usr/local/libexec/git-core/,
 take a look at [dive](https://github.com/wagoodman/dive), an excellent tool for inspecting files that reside within each layer of a Docker image.
@@ -96,8 +96,8 @@ take a look at [dive](https://github.com/wagoodman/dive), an excellent tool for 
 ## Making the image reusable: mount a volume instead of `COPY`
 
 It would be very handy if the same image could be used to test multiple versions of the code without having to rebuild the image.
-In order to achieve that, the Dockerfile doesn't `COPY` the entire project directory into the image (only the entrypoint script is directly copied).
-The codebase is instead mounted as a volume within the container rather than baked into the image.
+In order to achieve that, the Dockerfile doesn't back the entire project directory into the image with a  `COPY` command (only the entrypoint script is directly copied).
+Instead, the codebase is mounted as a volume within the container.
 Let's take a closer look at [ci/tox/docker-compose.yml](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/docker-compose.yml),
 which provides the recipe on how to configure the image build and how to run the container.
 
@@ -121,7 +121,7 @@ services:
 
 We'll return to the `image:` section and explain the origin of `DIRECTORY_HASH` later.
 
-As the `volumes:` section indicates, the entire git-machete codebase is mounted under /home/ci-user/git-machete/ inside the container.
+As the `volumes:` section shows, the entire codebase of git-machete is mounted under /home/ci-user/git-machete/ inside the container.
 `PYTHON_VERSION` and `GIT_VERSION` variables, which correspond to `python_version` and `git_version` build args,
 are provided by Travis based on the configuration in [.travis.yml](https://github.com/VirtusLab/git-machete/blob/master/.travis.yml),
 here redacted for brevity:
@@ -145,8 +145,8 @@ script: bash ci/tox/travis-script.sh
 (Yes, we still keep [Python 2 support](https://pythonclock.org/)...
 but nevertheless, if you still use Python 2, please upgrade your software!)
 
-The part of the pipeline that actually takes the contents of the mounted volume into account
-is located in the [ci/tox/build-context/entrypoint.sh](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/build-context/entrypoint.sh) script
+The part of the pipeline that actually uses the contents of the mounted volume
+is defined in the [ci/tox/build-context/entrypoint.sh](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/build-context/entrypoint.sh) script
 that is `COPY`-ed into the image:
 
 ```bash
@@ -166,18 +166,18 @@ $PYTHON setup.py install --user
 git machete --version
 ```
 
-It first checks if the git-machete repo has really been mounted under the current working directory, then fires
+This script first checks if the git-machete repo has really been mounted under the current working directory, then fires
 the all-encompassing [`tox`](https://tox.readthedocs.io/en/latest/) command that runs code style check, tests etc.
 
-In the [second part of the series](https://medium.com/virtuslab) we will cover a technique for caching the images
-and a trick that ensures that files created by the running container inside the volume are not owned by root on the host machine.
+In the [second part of the series](https://medium.com/virtuslab), we will cover a technique for caching the images,
+as well as a trick to ensure that the files created by the running container inside the volume are not owned by root on the host machine.
 
 
 ------------------------------------------------------------------------------------------------------------------------------------
 ------------------------------------------------------------------------------------------------------------------------------------
 ------------------------------------------------------------------------------------------------------------------------------------
 
-# Nifty Docker tricks you'll crave to use in your CI (vol. 2)
+# Nifty Docker tricks you'll want to use in your CI (vol. 2)
 
 The [first part of the series](https://medium.com/virtuslab) outlined techniques for reducing the image size
 as well as suggested to mount the project directory as a volume to avoid rebuilding the image every time the codebase changes.
