@@ -1,5 +1,5 @@
 
-# Nifty Docker tricks you'll want to use in your CI (vol. 1)
+# Nifty Docker tricks for your CI (vol. 1)
 
 If you run dockerized jobs in your CI (or consider migration to the Docker-based flow),
 it's very likely that some (if not most) of the techniques outlined in this blog post will prove highly useful to you.
@@ -62,7 +62,7 @@ RUN set -x \
     && rm -fv git-credential-* git-daemon git-fast-import git-http-backend git-imap-send git-remote-testsvn git-shell
 ```
 
-We'll discuss the parts that have been skipped in the [second part of this post](https://medium.com/virtuslab) when dealing with non-root user setup.
+We'll discuss the parts that have been skipped in the [second part of this post](https://medium.com/virtuslab/TODO) when dealing with non-root user setup.
 
 The purpose of these commands is to install a specific version of Git.
 The non-obvious step here is the very long chain of `&&`-ed shell commands under `RUN`, some of which, surprisingly, relate to _removing_ rather than installing software (`apk del`, `rm`).
@@ -169,7 +169,7 @@ git machete --version
 This script first checks if the git-machete repo has really been mounted under the current working directory, then fires
 the all-encompassing [`tox`](https://tox.readthedocs.io/en/latest/) command that runs code style check, tests etc.
 
-In the [second part of the series](https://medium.com/virtuslab), we will cover a technique for caching the images,
+In the [second part of the series](https://medium.com/virtuslab/TODO), we will cover a technique for caching the images,
 as well as a trick to ensure that the files created by the running container inside the volume are not owned by root on the host machine.
 
 
@@ -177,26 +177,26 @@ as well as a trick to ensure that the files created by the running container ins
 ------------------------------------------------------------------------------------------------------------------------------------
 ------------------------------------------------------------------------------------------------------------------------------------
 
-# Nifty Docker tricks you'll want to use in your CI (vol. 2)
+# Nifty Docker tricks for your CI (vol. 2)
 
-The [first part of the series](https://medium.com/virtuslab) outlined techniques for reducing the image size
-as well as suggested to mount the project directory as a volume to avoid rebuilding the image every time the codebase changes.
+The [first part of the series](https://medium.com/virtuslab/TODO) outlined the techniques for reducing the image size,
+as well as avoiding the need to rebuild the image every time when the codebase changes.
 Let's continue with further Docker-related CI tricks, as showcased in [git-machete](http://github.com/VirtusLab/git-machete)'s Travis CI setup.
 
 ## Caching the images: make use of Docker tags
 
-It would be nice to cache the generated images, so that CI doesn't need to build the same stuff over and over again.
-By the way, the purpose of the intense image size optimization [outlined previously](https://medium.com/virtuslab) is also to facilitate caching.
+It would be nice to cache the generated images, so that CI doesn't build the same stuff over and over again.
+By the way, the purpose of the extreme image size optimization outlined [in the previous part](https://medium.com/virtuslab/TODO) is also to facilitate caching.
 
-Think for a moment what specifically makes one generated image different from another.
+Think for a moment what exactly causes one generated image to be different from another.
 We obviously have to take into account different versions of Git and Python &mdash; passing different combinations of these will surely result in a different final image.
-These versions should therefore be included in the Docker image tag to make the caching possible.
+Therefore, the Docker image tag should include the information about these versions in order to make the caching possible.
 
-But with respect to project files... since it's ci/tox/build-context that's passed as build context,
+But with respect to the project files... since it's ci/tox/build-context that's passed as build context,
 the Dockerfile doesn't know anything about the files from outside the ci/tox/build-context!
-This means that even if other files change (which is inevitable as the project is being developed),
+This means that even though other files change as the project is being developed,
 we could theoretically use the same image as long as ci/tox/build-context remains untouched.
-Note that the changes to ci/tox/build-context are likely to be very rare compared to how often the rest of the codebase is likely to change.
+Note that the build context usually changes very rarely compared to the actual source files.
 
 There's a catch here, though.
 The build context is not the only thing that can affect the final Docker image.
@@ -333,17 +333,17 @@ docker-compose up --exit-code-from=tox tox
 We're just doing more sanity checks like whether variables are defined (`check_var`) and whether there are any uncommitted changes (`git diff-index`).
 Also, we don't attempt to push the freshly-built image to Docker Hub since we can rely on a local build cache instead.
 
-As you remember from the previous sections, our entire setup assumes that the git-machete directory from the host is mounted as a volume inside the Docker container.
-The problem is that, unless explicitly told otherwise, every command in the Docker container is executed with root user privileges.
-By default, any file that might be created by the container inside a volume will be owned by root not only in the container... but also in the host!
-This leads to a very annoying experience: all the files that are usually generated by the build (like `build/` and `dist/` directories in case of Python, or `target/` for JVM tools)
+As you remember from [the previous sections](https://medium.com/virtuslab/TODO), our entire setup assumes that the git-machete directory from the host is mounted as a volume inside the Docker container.
+The problem is that every command in the Docker container is by default executed with root user privileges.
+As a result, any new file that the container creates inside a volume will be owned by root not only in the container... but also in the host!
+This leads to a very annoying experience: all the files that are usually generated by the build (like build/ and dist/ directories in case of Python, or target/ for JVM tools)
 will belong to root:
 
 ![root owned folders](root-owned-folders.png)
 
 If only Docker had an option to run commands as a non-root user...
 
-Let's take a look again at [ci/tox/Dockerfile](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/Dockerfile), this time the bottom part:
+Let's take a look at [ci/tox/Dockerfile](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/Dockerfile) again, this time at the bottom part:
 ```dockerfile
 # ... git & python setup - skipped ...
 
@@ -364,8 +364,8 @@ WORKDIR /home/ci-user/git-machete
 
 The trick is to fill up the `user_id` and `group_id` ARGs passed to `addgroup` and `adduser` with user and group id of your user on your machine &mdash;
 that's exactly what happens in `function build_image` in ci/tox/local-run.sh: `docker-compose build --build-arg user_id="$(id -u)" --build-arg group_id="$(id -g)" tox`.
-On modern Linuxes, they're both likely 1000 (see `UID_MIN` and `GID_MIN` in /etc/login.defs) if you have just one user on your machine.
-CI is no special case &mdash; we fill those arguments with the CI user/group id, whatever it might be (on Travis they both turn out to be 2000).
+If you use any modern Linux distribution and have just one non-root user on your machine, they're both likely equal to 1000 (see `UID_MIN` and `GID_MIN` in /etc/login.defs);
+on Travis VMs they both turn out to be 2000.
 
 We switch from `root` to the newly-created user by calling `USER ci-user`.
 
