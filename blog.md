@@ -195,7 +195,7 @@ Therefore, the Docker image tag should include the information about these versi
 But with respect to the project files... since it's ci/tox/build-context that's passed as build context,
 the Dockerfile doesn't know anything about the files from outside the ci/tox/build-context!
 This means that even though other files change as the project is being developed,
-we could theoretically use the same image as long as ci/tox/build-context remains untouched.
+we could theoretically use the same image if ci/tox/build-context remains untouched.
 Note that the build context usually changes very rarely compared to the actual source files.
 
 There's a catch here, though.
@@ -206,24 +206,23 @@ But since all those files reside under ci/tox/, this doesn't make things much wo
 the entire resulting build image depends only on the contents of ci/tox/ directory instead of ci/tox/build-context/
 (with one exception that packages installed via apt-get can also get updated over time in their respective APT repositories).
 
-Given all that, what if we just computed the hash of the entire ci/tox/ directory and used it to identify the image?
-Actually, we don't even need to derive that hash ourselves!
-We can take advantage of SHA-1 hashes that git computes for each object.
-It's a well known fact that each commit in git has a unique hash, but actually SHA-1 hashes are also derived for each file (called a _blob_ in gitspeak) and each directory (called a _tree_).
-The hash of a tree is a function of the hashes of all of its underlying blobs and, recursively, trees.
+Therefore, the image can be uniquely identified by the hash of its ci/tox/ directory.
+We don't even need to derive that hash manually, because git computes a SHA-1 hash for each object it stores.
+It's a well known fact that every commit has a unique hash, but actually SHA-1 hashes are also derived for each file (called a _blob_ in gitspeak) and each directory (called a _tree_).
+The hash of a tree is based on the hashes of all of its nested blobs and subtrees.
 More details can be found in [this slide deck on git internals (aka "git's guts")](https://slides.com/plipski/git-internals/).
-For our use case it means that once any file inside ci/tox/ changes, we'll end up with a different Docker image tag.
+For our use case, it means that any change to the files inside ci/tox/ will yield a new Docker image tag.
 
-To extract the hash of a given directory within the current commit (HEAD),
-we need to resort to one of the more powerful and versatile _plumbing_ commands of git called `rev-parse`:
+To get the hash of a given directory within the current commit (HEAD),
+we can resort to a plumbing command called `rev-parse`:
 
 ```bash
 git rev-parse HEAD:ci/tox
 ```
 
-The `<revision>:<path>` syntax might be familiar from `git show`.
+The argument has the form `<revision>:<path>`, same as in `git show`.
 
-Note that this hash is different from the resulting Docker image hash.
+Note that this hash is not the same as the hash of the resulting Docker image.
 Also, git object hashes are 160-bit (40 hex digit) SHA-1 hashes, while Docker identifies images by their 256-bit (64 hex digit) SHA-256 hash.
 
 Back into [ci/tox/docker-compose.yml](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/docker-compose.yml) for a moment:
@@ -246,7 +245,8 @@ DIRECTORY_HASH=$(git rev-parse HEAD:ci/tox)
 export DIRECTORY_HASH
 cd ci/tox/
 
-# If the image corresponding to the expected git&python versions and the current state of ci/tox is missing, build it and push to Docker Hub.
+# If there is no cached image for the expected Git&Python versions and the current state of ci/tox,
+# build the image and push it to the Docker Hub.
 docker-compose pull tox || {
   docker-compose build --build-arg user_id="$(id -u)" --build-arg group_id="$(id -g)" tox
   # In builds coming from forks, secret vars are unavailable for security reasons; hence, we have to skip pushing the newly built image.
@@ -264,7 +264,7 @@ If `docker-compose pull` returns a non-zero exit code, then it means no build so
 Git version, Python version and contents of ci/tox directory, or an error occurred while pulling.
 In either case, we need to construct the image from scratch.
 
-Note that `docker-compose build` accepts `user_id ` and `group_id` build arguments... we'll cover that in the next section.
+Note that `docker-compose build` accepts additional arguments, namely `user_id ` and `group_id`; we'll explain their purpose in the next section.
 
 Once the image is built, we log in to Docker Hub and perform a `docker-compose push`.
 A little catch here: Travis completely forbids the use of secret variables in builds that are triggered by forks.
@@ -333,11 +333,12 @@ docker-compose up --exit-code-from=tox tox
 We're just doing more sanity checks like whether variables are defined (`check_var`) and whether there are any uncommitted changes (`git diff-index`).
 Also, we don't attempt to push the freshly-built image to Docker Hub since we can rely on a local build cache instead.
 
-As you remember from [the previous sections](https://medium.com/virtuslab/TODO), our entire setup assumes that the git-machete directory from the host is mounted as a volume inside the Docker container.
-The problem is that every command in the Docker container is by default executed with root user privileges.
-As a result, any new file that the container creates inside a volume will be owned by root not only in the container... but also in the host!
+Our entire setup assumes that the git-machete directory from the host is mounted as a volume inside the Docker container
+(as described in detail in [part 1](https://medium.com/virtuslab/TODO)).
+Every command in the Docker container is by default executed with root user privileges.
+As a consequence, any new file that the container creates inside the mounted volume will be owned by root not only in the container... but also on the host!
 This leads to a very annoying experience: all the files that are usually generated by the build (like build/ and dist/ directories in case of Python, or target/ for JVM tools)
-will belong to root:
+will belong to root.
 
 ![root owned folders](root-owned-folders.png)
 
@@ -362,7 +363,7 @@ CMD ["/home/ci-user/entrypoint.sh"]
 WORKDIR /home/ci-user/git-machete
 ```
 
-The trick is to fill up the `user_id` and `group_id` ARGs passed to `addgroup` and `adduser` with user and group id of your user on your machine &mdash;
+The trick is to fill up the `user_id` and `group_id` ARGs passed to `addgroup` and `adduser` with user and group ID of your user on your machine &mdash;
 that's exactly what happens in `function build_image` in ci/tox/local-run.sh: `docker-compose build --build-arg user_id="$(id -u)" --build-arg group_id="$(id -g)" tox`.
 If you use any modern Linux distribution and have just one non-root user on your machine, they're both likely equal to 1000 (see `UID_MIN` and `GID_MIN` in /etc/login.defs);
 on Travis VMs they both turn out to be 2000.
@@ -373,14 +374,14 @@ Using rather unusual syntax (Unix-style `--something` options are rarely passed 
 Otherwise, the files would end up owned by `root:root`.
 The preceding `USER` instruction, unfortunately, doesn't affect the default owner of `COPY`-ed (or `ADD`-ed, for that matter) files.
 
-One can now ask... how come `ci-user` from inside the container can be in any way equivalent to an existing user on the host machine
-(esp. given that the host most likely doesn't have a `ci-user` user or group)?
+The fact that the files created by `ci-user` within the container also belong to an existing user in the host system may seem confusing.
+Where does this correspondence come from, especially if the host doesn't have a user or group named `ci-user`?
 
-Well, actually it's the numeric id of user/group that matters; names on Unix systems are just aliases,
-and they can resolve differently on the host machine and inside the container.
+Well, actually it's the numeric ID of user/group that matters.
+User names on Unix systems are just aliases, and the same user ID may have different names assigned on the host system and inside the container.
 As a consequence, even if there was indeed a user called `ci-user` on the host machine,
 that still completely wouldn't matter from the perspective of ownership of files generated within a container &mdash;
-still, the only thing that matters is the numeric id.
+still, the only thing that matters is the numeric ID.
 
 Now after launching `./local-run.sh` we can observe that all files generated inside the volume are owned by the currently logged-in host user:
 
@@ -389,14 +390,10 @@ Now after launching `./local-run.sh` we can observe that all files generated ins
 
 ## Summary: where to look next
 
-We've taken a look at the entire stack used for building and testing git branches.
-There is also a similar setting for uploading Debian packages to [PPA (Personal Package Archive) for Ubuntu](https://launchpad.net/~virtuslab/+archive/ubuntu/git-machete/+packages)
-in [ci/apt-ppa-upload](https://github.com/VirtusLab/git-machete/tree/master/ci/apt-ppa-upload) directory,
-which is only executed for git tags.
-From a technical perspective, the only significantly different point is more prevalent use of secrets (for GPG and SSH).
+We've examined the entire stack of the tools used for building and testing git-machete.
 
-For more details on git-machete tool itself, see
-the [first part of a guide on how to use the tool](https://medium.com/virtuslab/make-your-way-through-the-git-rebase-jungle-with-git-machete-e2ed4dbacd02) and
-the [second part for the more advanced features](https://medium.com/virtuslab/git-machete-strikes-again-traverse-the-git-rebase-jungle-even-faster-with-v2-0-f43ebaf8abb0).
+More details on the git-machete tool itself can be found in the usage guide:
+[part 1 (basic usage)](https://medium.com/virtuslab/make-your-way-through-the-git-rebase-jungle-with-git-machete-e2ed4dbacd02)
+and [part 2(link) (advanced features)](https://medium.com/virtuslab/git-machete-strikes-again-traverse-the-git-rebase-jungle-even-faster-with-v2-0-f43ebaf8abb0).
 
 Contributions (and stars on Github) are more than welcome!
