@@ -74,7 +74,7 @@ If an instruction (such as `RUN` or `COPY`) adds data to the underlying file sys
 these data, even if removed in a subsequent layer, will remain part of the intermediate layer that corresponds to the instruction, and will thus make their way to the final image.
 
 If a piece of software (like `alpine-sdk`) is only needed for building the image but not for running the container, then leaving it installed is an utter waste of space.
-A reasonable way (but not the only one &mdash; see the [multistage builds](https://docs.docker.com/develop/develop-images/multistage-build/)) to prevent the resulting image from bloating
+A reasonable way to prevent the resulting image from bloating
 is to remove unnecessary files in the very same layer in which they were added.
 Hence, the first `RUN` instruction installs all the compile-time dependencies of Git (`alpine-sdk autoconf gettext wget zlib-dev`),
 only to remove them (`apk del`) later in the same shell script.
@@ -189,11 +189,11 @@ It would be nice to cache the generated images, so that CI doesn't build the sam
 By the way, the purpose of the extreme image size optimization outlined [in the previous part](https://medium.com/virtuslab/TODO) is also to facilitate caching.
 
 Think for a moment what exactly causes one generated image to be different from another.
-We obviously have to take into account different versions of Git and Python &mdash; passing different combinations of these will surely result in a different final image.
+We obviously have to take into account the versions of Git and Python &mdash; passing different combinations of these will surely result in a different final image.
 Therefore, the Docker image tag should include the information about these versions in order to make the caching possible.
 
 But with respect to the project files... since it's ci/tox/build-context that's passed as build context,
-the Dockerfile doesn't know anything about the files from outside the ci/tox/build-context!
+the Dockerfile doesn't know anything about the files from outside that directory!
 This means that even though other files change as the project is being developed,
 we could theoretically use the same image if ci/tox/build-context remains untouched.
 Note that the build context usually changes very rarely compared to the actual source files.
@@ -257,11 +257,11 @@ docker-compose pull tox || {
 }
 ```
 
-Once we've got the directory hash at hand, the first thing that happens is that we check (`docker-compose pull`) whether the image with the given tag is already present
+Once we've got the directory hash, first of all we check (`docker-compose pull`) whether the image with the given tag is already present
 in the [virtuslab/git-machete-ci-tox repository on Docker Hub](https://hub.docker.com/r/virtuslab/git-machete-ci-tox/tags).
 
-If `docker-compose pull` returns a non-zero exit code, then it means no build so far has been executed for the given combination of
-Git version, Python version and contents of ci/tox directory, or an error occurred while pulling.
+If there is no previous build for the given combination of Git version, Python version and contents of ci/tox directory,
+`docker-compose pull` would return a non-zero exit code, although this can also mean a failure of the pull operation.
 In either case, we need to construct the image from scratch.
 
 Note that `docker-compose build` accepts additional arguments, namely `user_id ` and `group_id`; we'll explain their purpose in the next section.
@@ -270,13 +270,13 @@ Once the image is built, we log in to Docker Hub and perform a `docker-compose p
 A little catch here: Travis completely forbids the use of secret variables in builds that are triggered by forks.
 Even though Travis masks the _exact matches_ of a secret value in build logs, it can't prevent a malicious "contributor" from printing e.g. base64-encoded
 (or otherwise reversibly transformed) secret, which would constitute an obvious security breach.
-Thus, we need to make sure that the Docker credentials are indeed available in the environment; otherwise, we refrain from pushing the image.
+Thus, we need to make sure that the Docker credentials are indeed available in the environment; if that's not the case, we refrain from pushing the image.
 
-Note that using `docker-compose`, although not strictly necessary for our use case, saves us from specifying the same parameters over and over again.
+It is not strictly necessary to user `docker-compose`, but this saves us from specifying the same parameters over and over again.
 If we were to use just plain `docker pull/build/push` instead of their `docker-compose` counterparts,
 we'd need to supply e.g. the image name and tag every single time.
 
-Once we have the image in place (either just being built or, hopefully, pulled from Docker Hub),
+Once we have the image in place (either pulled from Docker Hub or built from scratch),
 running the tests is easy, see [ci/tox/travis-script.sh](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/travis-script.sh):
 
 ```bash
@@ -285,12 +285,12 @@ running the tests is easy, see [ci/tox/travis-script.sh](https://github.com/Virt
 docker-compose up --exit-code-from=tox tox
 ```
 
-The `--exit-code-from=` option of `docker-compose up` is relatively unknown, yet crucial in automated workflows.
-By default, `docker-compose up` returns zero regardless of the exit codes of the launched services.
-This leads to CI pipelines falsely succeeding even when `tox` (and thus the entire entrypoint script) fails.
-We have to explicitly pick the service whose exit code should serve as the exit code for the entire `docker-compose up` command.
-One of the likely rationales for that option not being the default is that `up` can run more than one service at once (esp. when `depends_on` mechanism is involved)
-and it wouldn't be obvious the exit code of which service should be selected.
+The `--exit-code-from=` option of `docker-compose up` is relatively unknown, yet it's crucial in automated workflows.
+By default, `docker-compose up` returns zero regardless of the exit codes returned by the services it launched.
+This leads to false success reports in CI pipelines even when `tox` (and thus the entire entrypoint script) fails.
+We have to explicitly pick the service whose exit code will become the exit code for the entire `docker-compose up` command.
+The likely reason behind this behaviour is the fact that the `up` command can run more than one service (especially when the `depends_on` mechanism is involved).
+In such cases it is not clear which service should provide the exit code for the entire command.
 
 
 ## Running the build locally: configure a non-root user
@@ -330,8 +330,8 @@ fi
 docker-compose up --exit-code-from=tox tox
 ```
 
-We're just doing more sanity checks like whether variables are defined (`check_var`) and whether there are any uncommitted changes (`git diff-index`).
-Also, we don't attempt to push the freshly-built image to Docker Hub since we can rely on a local build cache instead.
+The difference is just additional sanity checks like whether variables are defined (`check_var`) and whether there are any uncommitted changes (`git diff-index`).
+Also, we don't attempt to push the freshly-built image to the Docker Hub since we can rely on a local build cache instead.
 
 Our entire setup assumes that the git-machete directory from the host is mounted as a volume inside the Docker container
 (as described in detail in [part 1](https://medium.com/virtuslab/TODO)).
@@ -363,8 +363,9 @@ CMD ["/home/ci-user/entrypoint.sh"]
 WORKDIR /home/ci-user/git-machete
 ```
 
-The trick is to fill up the `user_id` and `group_id` ARGs passed to `addgroup` and `adduser` with user and group ID of your user on your machine &mdash;
-that's exactly what happens in `function build_image` in ci/tox/local-run.sh: `docker-compose build --build-arg user_id="$(id -u)" --build-arg group_id="$(id -g)" tox`.
+The trick is to create a new user with the same user and group ID as your user on the host.
+This is accomplished by the `function build_image` in ci/tox/local-run.sh:
+`docker-compose build --build-arg user_id="$(id -u)" --build-arg group_id="$(id -g)" tox`.
 If you use any modern Linux distribution and have just one non-root user on your machine, they're both likely equal to 1000 (see `UID_MIN` and `GID_MIN` in /etc/login.defs);
 on Travis VMs they both turn out to be 2000.
 
@@ -383,17 +384,19 @@ As a consequence, even if there was indeed a user called `ci-user` on the host m
 that still completely wouldn't matter from the perspective of ownership of files generated within a container &mdash;
 still, the only thing that matters is the numeric ID.
 
-Now after launching `./local-run.sh` we can observe that all files generated inside the volume are owned by the currently logged-in host user:
+After launching `./local-run.sh` we can see that all files generated inside the volume are owned by the current host user:
 
 ![user owned folders](user-owned-folders.png)
 
 
-## Summary: where to look next
+## Next steps
 
-We've examined the entire stack of the tools used for building and testing git-machete.
+We advise to also get familiar with an alternative technique for reducing image size called
+[multistage builds](https://docs.docker.com/develop/develop-images/multistage-build/).
+It was not a viable option for our use case, however, since Git installs files into multiple locations across the file system.
 
 More details on the git-machete tool itself can be found in the usage guide:
 [part 1 (basic usage)](https://medium.com/virtuslab/make-your-way-through-the-git-rebase-jungle-with-git-machete-e2ed4dbacd02)
-and [part 2(link) (advanced features)](https://medium.com/virtuslab/git-machete-strikes-again-traverse-the-git-rebase-jungle-even-faster-with-v2-0-f43ebaf8abb0).
+and [part 2 (advanced features)](https://medium.com/virtuslab/git-machete-strikes-again-traverse-the-git-rebase-jungle-even-faster-with-v2-0-f43ebaf8abb0).
 
 Contributions (and stars on Github) are more than welcome!
