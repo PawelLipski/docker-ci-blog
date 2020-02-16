@@ -149,7 +149,7 @@ The part of the pipeline that actually uses the contents of the mounted volume
 is defined in the [ci/tox/build-context/entrypoint.sh](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/build-context/entrypoint.sh) script
 that is `COPY`-ed into the image:
 
-```bash
+```shell script
 #!/bin/sh
 
 { [ -f setup.py ] && grep -q "name='git-machete'" setup.py; } || {
@@ -216,7 +216,7 @@ For our use case, it means that any change to the files inside ci/tox/ will yiel
 To get the hash of a given directory within the current commit (HEAD),
 we can resort to a plumbing command called `rev-parse`:
 
-```bash
+```shell script
 git rev-parse HEAD:ci/tox
 ```
 
@@ -238,7 +238,7 @@ services:
 We already know that `GIT_VERSION` and `PYTHON_VERSION` are set up directly by Travis based on values specified in .travis.yml.
 Let's peek into [ci/tox/travis-install.sh](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/travis-install.sh) to see where `DIRECTORY_HASH` comes from:
 
-```bash
+```shell script
 # ... skipped ...
 
 DIRECTORY_HASH=$(git rev-parse HEAD:ci/tox)
@@ -279,7 +279,7 @@ we'd need to supply e.g. the image name and tag every single time.
 Once we have the image in place (either pulled from Docker Hub or built from scratch),
 running the tests is easy, see [ci/tox/travis-script.sh](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/travis-script.sh):
 
-```bash
+```shell script
 # ... skipped ...
 
 docker-compose up --exit-code-from=tox tox
@@ -297,7 +297,7 @@ In such cases it is not clear which service should provide the exit code for the
 
 To run the tests locally:
 
-```bash
+```shell script
 cd ci/tox
 cp .env-sample .env  # and optionally edit if needed to change git/python version
 ./local-run.sh
@@ -305,7 +305,7 @@ cp .env-sample .env  # and optionally edit if needed to change git/python versio
 
 [ci/tox/local-run.sh](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/local-run.sh) is somewhat similar to how things are run on Travis:
 
-```bash
+```shell script
 # ... skipped ...
 
 function build_image() {
@@ -318,12 +318,13 @@ check_var PYTHON_VERSION
 
 set -x
 
+hash=$(git rev-parse HEAD:ci/tox)
 if git diff-index --quiet HEAD .; then
   DIRECTORY_HASH=$(git rev-parse HEAD:ci/tox)
-  export DIRECTORY_HASH
+  export DIRECTORY_HASH="$hash"
   docker-compose pull tox || build_image
 else
-  export DIRECTORY_HASH=unspecified
+  export DIRECTORY_HASH="$hash"-dirty
   build_image
 fi
 
