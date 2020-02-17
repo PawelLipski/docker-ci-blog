@@ -2,7 +2,7 @@
 # Nifty Docker tricks for your CI (vol. 1)
 
 If you run dockerized jobs in your CI (or consider migration to the Docker-based flow),
-it's very likely that some (if not most) of the techniques outlined in this blog post will prove highly useful to you.
+it's very likely that some (if not most) of the techniques outlined in this blog post will prove useful to you.
 
 We'll take a closer look at the CI process for an open source tool, [git machete](https://github.com/VirtusLab/git-machete), that is actively developed at VirtusLab.
 Having started as a simple tool for rebase automation, it has now grown into a full-fledged Git repository organizer.
@@ -27,13 +27,13 @@ Let's start with the project layout (also available [on Github](https://github.c
 
 These are the files that are particularly relevant to us:
 
-| File                               | Responsibility                                                       |
-| ---                                | ---                                                                  |
-| .travis.yml                        | Tells the CI to launch ci/tox/travis-{script,install}.sh             |
-| ci/tox/travis-{script,install}.sh  | Runs docker-compose pull/build/push/up commands                      |
-| ci/tox/docker-compose.yml          | Provides configuration for building the image/running the container  |
-| ci/tox/Dockerfile                  | Stores recipe on how to build the Docker image                       |
-| ci/tox/build-context/entrypoint.sh | Serves as the entrypoint for the container                           |
+| File                               | Responsibility                                                         |
+| ---                                | ---                                                                    |
+| .travis.yml                        | Tells the CI to launch ci/tox/travis-{script,install}.sh               |
+| ci/tox/travis-{script,install}.sh  | Runs docker-compose pull/build/push/up commands                        |
+| ci/tox/docker-compose.yml          | Provides configuration for building the image andrunning the container |
+| ci/tox/Dockerfile                  | Stores recipe on how to build the Docker image                         |
+| ci/tox/build-context/entrypoint.sh | Serves as the entrypoint for the container                             |
 
 
 ## Reducing image size: keep each layer small
@@ -79,7 +79,7 @@ is to remove unnecessary files in the very same layer in which they were added.
 Hence, the first `RUN` instruction installs all the compile-time dependencies of Git (`alpine-sdk autoconf gettext wget zlib-dev`),
 only to remove them (`apk del`) later in the same shell script.
 What remains in the resulting layer is just the Git installation that we care for,
-but not the toolchain it was build with (which would be useless in the final image).
+but not the toolchain it was built with (which would be useless in the final image).
 
 A more na&iuml;ve version of this Dockerfile, in which all the dependencies are installed at the very beginning and never removed, yields an almost 800 MB behemoth:
 
@@ -96,7 +96,7 @@ take a look at [dive](https://github.com/wagoodman/dive), an excellent tool for 
 ## Making the image reusable: mount a volume instead of `COPY`
 
 It would be very handy if the same image could be used to test multiple versions of the code without having to rebuild the image.
-In order to achieve that, the Dockerfile doesn't back the entire project directory into the image with a  `COPY` command (only the entrypoint script is directly copied).
+In order to achieve that, the Dockerfile doesn't bake the entire project directory into the image with a  `COPY` command (only the entrypoint script is directly copied).
 Instead, the codebase is mounted as a volume within the container.
 Let's take a closer look at [ci/tox/docker-compose.yml](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/docker-compose.yml),
 which provides the recipe on how to configure the image build and how to run the container.
@@ -122,7 +122,7 @@ services:
 We'll return to the `image:` section and explain the origin of `DIRECTORY_HASH` later.
 
 As the `volumes:` section shows, the entire codebase of git-machete is mounted under /home/ci-user/git-machete/ inside the container.
-`PYTHON_VERSION` and `GIT_VERSION` variables, which correspond to `python_version` and `git_version` build args,
+The variables `PYTHON_VERSION` and `GIT_VERSION`, which correspond to `python_version` and `git_version` build args,
 are provided by Travis based on the configuration in [.travis.yml](https://github.com/VirtusLab/git-machete/blob/master/.travis.yml),
 here redacted for brevity:
 
@@ -169,8 +169,8 @@ git machete --version
 This script first checks if the git-machete repo has really been mounted under the current working directory, then fires
 the all-encompassing [`tox`](https://tox.readthedocs.io/en/latest/) command that runs code style check, tests etc.
 
-In the [second part of the series](https://medium.com/virtuslab/TODO), we will cover a technique for caching the images,
-as well as a trick to ensure that the files created by the running container inside the volume are not owned by root on the host machine.
+In the [second part of the series](https://medium.com/virtuslab/TODO), we will cover a technique for caching the images with great efficiency.
+We will also ensure that the files created by the running container inside the volume are not owned by root on the host machine.
 
 
 ------------------------------------------------------------------------------------------------------------------------------------
@@ -214,7 +214,7 @@ More details can be found in [this slide deck on git internals (aka "git's guts"
 For our use case, it means that any change to the files inside ci/tox/ will yield a new Docker image tag.
 
 To get the hash of a given directory within the current commit (HEAD),
-we can resort to a plumbing command called `rev-parse`:
+we can use a plumbing command called `rev-parse`:
 
 ```shell script
 git rev-parse HEAD:ci/tox
@@ -272,9 +272,9 @@ Even though Travis masks the _exact matches_ of a secret value in build logs, it
 (or otherwise reversibly transformed) secret, which would constitute an obvious security breach.
 Thus, we need to make sure that the Docker credentials are indeed available in the environment; if that's not the case, we refrain from pushing the image.
 
-It is not strictly necessary to user `docker-compose`, but this saves us from specifying the same parameters over and over again.
+It is not strictly necessary to use `docker-compose`, but this saves us from specifying the same parameters over and over again.
 If we were to use just plain `docker pull/build/push` instead of their `docker-compose` counterparts,
-we'd need to supply e.g. the image name and tag every single time.
+we'd need to supply parameters such as the image name and tag every single time.
 
 Once we have the image in place (either pulled from Docker Hub or built from scratch),
 running the tests is easy, see [ci/tox/travis-script.sh](https://github.com/VirtusLab/git-machete/blob/master/ci/tox/travis-script.sh):
@@ -382,8 +382,8 @@ Where does this correspondence come from, especially if the host doesn't have a 
 Well, actually it's the numeric ID of user/group that matters.
 User names on Unix systems are just aliases, and the same user ID may have different names assigned on the host system and inside the container.
 As a consequence, even if there was indeed a user called `ci-user` on the host machine,
-that still completely wouldn't matter from the perspective of ownership of files generated within a container &mdash;
-still, the only thing that matters is the numeric ID.
+that still wouldn't matter from the perspective of ownership of files generated within a container &mdash;
+the only thing that matters is the numeric ID.
 
 After launching `./local-run.sh` we can see that all files generated inside the volume are owned by the current host user:
 
