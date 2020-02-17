@@ -394,7 +394,7 @@ After launching `./local-run.sh` we can see that all files generated inside the 
 
 We advise to also get familiar with an alternative technique for reducing image size called
 [multistage builds](https://docs.docker.com/develop/develop-images/multistage-build/).
-It's just simpler to remove the packages and files that are no longer necessary once the build is complete,
+It takes less work to remove the packages and files that are no longer necessary once the build is complete,
 than to copy between the stages the ones that are relevant.
 
 More details on the git-machete tool itself can be found in the usage guide:
