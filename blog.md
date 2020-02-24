@@ -62,7 +62,7 @@ RUN set -x \
     && rm -fv git-credential-* git-daemon git-fast-import git-http-backend git-imap-send git-remote-testsvn git-shell
 ```
 
-We'll discuss the parts that have been skipped in the [second part of this post](https://medium.com/virtuslab/TODO) when dealing with non-root user setup.
+We'll discuss the parts that have been skipped in the [second part of this post](https://medium.com/virtuslab/nifty-docker-tricks-for-your-ci-vol-2-c5191a67f1a4) when dealing with non-root user setup.
 
 The purpose of these commands is to install a specific version of Git.
 The non-obvious step here is the very long chain of `&&`-ed shell commands under `RUN`, some of which, surprisingly, relate to _removing_ rather than installing software (`apk del`, `rm`).
@@ -168,7 +168,7 @@ git machete --version
 This script first checks if the git-machete repo has really been mounted under the current working directory, then fires
 the all-encompassing [`tox`](https://tox.readthedocs.io/en/latest/) command that runs code style check, tests etc.
 
-In the [second part of the series](https://medium.com/virtuslab/TODO), we will cover a technique for caching the images with great efficiency.
+In the [second part of the series](https://medium.com/virtuslab/nifty-docker-tricks-for-your-ci-vol-2-c5191a67f1a4), we will cover a technique for caching the images with great efficiency.
 We will also ensure that the files created by the running container inside the volume are not owned by root on the host machine.
 
 
